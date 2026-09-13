@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base target="_top">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 620px;
+      margin: 30px auto;
+      padding: 20px;
+      line-height: 1.5;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+    }
+
+    .intro {
+      color: #555;
+      margin-bottom: 24px;
+    }
+
+    label {
+      display: block;
+      margin-top: 16px;
+      font-weight: 600;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      margin-top: 6px;
+      font-size: 15px;
+    }
+
+    textarea {
+      resize: vertical;
+    }
+
+    button {
+      width: 100%;
+      padding: 13px;
+      margin-top: 26px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Brynex Career Interest Form</h2>
+
+  <div class="intro">
+    Please complete this short form so our recruitment team can review your profile.
+  </div>
+
+  <form
+    method="post"
+    action="<?= formAction ?>">
+
+    <input
+      type="hidden"
+      name="intakeId"
+      value="<?= intakeId ?>">
+
+    <input
+      type="hidden"
+      name="candidateName"
+      value="<?= candidateName ?>">
+
+    <input
+      type="hidden"
+      name="position"
+      value="<?= position ?>">
+
+    <label>
+      Are you interested in this opportunity?
+    </label>
+
+    <select
+      name="interested"
+      required>
+
+      <option value="">
+        Select
+      </option>
+
+      <option value="Yes">
+        Yes
+      </option>
+
+      <option value="No">
+        No
+      </option>
+
+    </select>
+
+    <label>
+      Current Location
+    </label>
+
+    <input
+      type="text"
+      name="currentLocation"
+      required>
+
+    <label>
+      Current / Last Designation
+    </label>
+
+    <input
+      type="text"
+      name="designation">
+
+    <label>
+      Current / Last Company
+    </label>
+
+    <input
+      type="text"
+      name="company">
+
+    <label>
+      Total Experience
+    </label>
+
+    <input
+      type="text"
+      name="totalExperience"
+      placeholder="Example: 3 years">
+
+    <label>
+      Relevant Experience
+    </label>
+
+    <input
+      type="text"
+      name="relevantExperience"
+      placeholder="Example: 2 years in retail">
+
+    <label>
+      Current Salary
+    </label>
+
+    <input
+      type="text"
+      name="currentSalary">
+
+    <label>
+      Expected Salary
+    </label>
+
+    <input
+      type="text"
+      name="expectedSalary">
+
+    <label>
+      Notice Period / Earliest Joining Date
+    </label>
+
+    <input
+      type="text"
+      name="noticePeriod">
+
+    <label>
+      Preferred Work Location
+    </label>
+
+    <input
+      type="text"
+      name="preferredLocation">
+
+    <label>
+      Are you willing to relocate if required?
+    </label>
+
+    <select name="relocate">
+
+      <option value="">
+        Select
+      </option>
+
+      <option value="Yes">
+        Yes
+      </option>
+
+      <option value="No">
+        No
+      </option>
+
+      <option value="Maybe">
+        Maybe
+      </option>
+
+    </select>
+
+    <label>
+      Anything else you would like us to know?
+    </label>
+
+    <textarea
+      name="remarks"
+      rows="4"></textarea>
+
+    <button type="submit">
+      Submit
+    </button>
+
+  </form>
+
+</body>
+
+</html>

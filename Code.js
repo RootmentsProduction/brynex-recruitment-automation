@@ -129,7 +129,7 @@ function processCvFile_(
       position
     );
 
-    sheet.appendRow([
+    appendIntakeRow_(sheet, [
       file.getId(),                      // A Intake ID
       file.getName(),                    // B CV File Name
       file.getUrl(),                     // C CV Link
@@ -157,7 +157,7 @@ function processCvFile_(
       ''                                 // Y Notes
     ]);
   } catch (error) {
-    sheet.appendRow([
+    appendIntakeRow_(sheet, [
       file.getId(),                      // A
       file.getName(),                    // B
       file.getUrl(),                     // C
@@ -3506,10 +3506,22 @@ function normalizeMobile_(number) {
 
   return digits;
 }
-function testProcessInterviewReply() {
-  processInterviewReply_(
-    '919746462423',
-    'confirm slot 1',
-    'SLOT1|1AcfEFTFc4QxVpR4zxDy5ldqJsPe53UPi'
-  );
+function appendIntakeRow_(sheet, rowValues) {
+  const ids = sheet
+    .getRange(2, 1, sheet.getMaxRows() - 1, 1)
+    .getDisplayValues()
+    .flat();
+
+  let targetRow = 2;
+
+  for (let i = 0; i < ids.length; i++) {
+    if (!ids[i]) {
+      targetRow = i + 2;
+      break;
+    }
+  }
+
+  sheet
+    .getRange(targetRow, 1, 1, rowValues.length)
+    .setValues([rowValues]);
 }

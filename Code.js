@@ -3555,6 +3555,508 @@ function sendPendingInterviewInvites() {
 function testInterviewInvite() {
   sendInterviewInviteForRow_(2);
 }
+/**
+ * Creates the hourly interview-reminder trigger.
+ * Run this once after deploying the reminder code.
+ */
+function setupInterviewReminderAutomation() {
+
+  ScriptApp.getProjectTriggers()
+    .filter(t =>
+      t.getHandlerFunction() ===
+      'sendDueInterviewReminders'
+    )
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger(
+    'sendDueInterviewReminders'
+  )
+    .timeBased()
+    .everyHours(1)
+    .create();
+
+  console.log(
+    'Interview reminder automation enabled.'
+  );
+}
+
+
+/**
+ * Sends one reminder per confirmed interview when the
+ * scheduled interview is within the next 24 hours.
+ *
+ * Interview Scheduling Queue:
+ * V = Reminder Status
+ * W = Reminder Sent On
+ */
+function sendDueInterviewReminders() {
+
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(1000)) return;
+
+  try {
+
+    const ss =
+      SpreadsheetApp.openById(
+        SPREADSHEET_ID
+      );
+
+    const sheet =
+      ss.getSheetByName(
+        'Interview Scheduling Queue'
+      );
+
+    if (!sheet) {
+      throw new Error(
+        'Interview Scheduling Queue is missing.'
+      );
+    }
+
+    ensureInterviewReminderColumns_(sheet);
+
+    const lastRow = sheet.getLastRow();
+
+    if (lastRow < 2) return;
+
+    const data =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          23
+        )
+        .getValues();
+
+    const now = new Date();
+    const twentyFourHoursMs =
+      24 * 60 * 60 * 1000;
+
+    let sentCount = 0;
+
+    data.forEach((row, index) => {
+
+      const rowNumber = index + 2;
+
+      const candidateName =
+        String(row[1] || '').trim(); // B
+
+      const position =
+        String(row[2] || '').trim(); // C
+
+      const mobileNumber =
+        row[3]; // D
+
+      const mode =
+        String(row[10] || '').trim(); // K
+
+      const details =
+        String(row[11] || '').trim(); // L
+
+      const confirmedDate =
+        row[13]; // N
+
+      const confirmedTime =
+        row[14]; // O
+
+      const interviewStatus =
+        String(row[15] || '').trim(); // P
+
+      const inviteStatus =
+        String(row[16] || '').trim(); // Q
+
+      const reminderStatus =
+        String(row[21] || '').trim(); // V
+
+      if (
+        interviewStatus !== 'Scheduled' ||
+        inviteStatus !== 'Confirmed'
+      ) {
+        return;
+      }
+
+      // Sent/Sending are terminal for duplicate prevention.
+      if (
+        reminderStatus === 'Sent' ||
+        reminderStatus === 'Sending'
+      ) {
+        return;
+      }
+
+      if (
+        !candidateName ||
+        !position ||
+        !mobileNumber ||
+        !confirmedDate ||
+        !confirmedTime ||
+        !mode
+      ) {
+        sheet
+          .getRange(rowNumber, 22)
+          .setValue('Needs Review');
+
+        return;
+      }
+
+      // Variable 6 in the approved Meta template is required.
+      if (!details) {
+
+        sheet
+          .getRange(rowNumber, 22)
+          .setValue('Needs Details');
+
+        return;
+      }
+
+      const interviewDateTime =
+        combineInterviewDateTime_(
+          confirmedDate,
+          confirmedTime
+        );
+
+      const msUntilInterview =
+        interviewDateTime.getTime() -
+        now.getTime();
+
+      // Only future interviews within the next 24 hours.
+      if (
+        msUntilInterview <= 0 ||
+        msUntilInterview > twentyFourHoursMs
+      ) {
+        return;
+      }
+
+      const dateText =
+        formatInterviewReminderDate_(
+          confirmedDate
+        );
+
+      const timeText =
+        formatInterviewReminderTime_(
+          confirmedTime
+        );
+
+      // Mark before the API call so overlapping runs
+      // cannot send the same reminder twice.
+      sheet
+        .getRange(rowNumber, 22)
+        .setValue('Sending');
+
+      SpreadsheetApp.flush();
+
+      try {
+
+        sendInterviewReminderTemplate_(
+          mobileNumber,
+          candidateName,
+          position,
+          dateText,
+          timeText,
+          mode,
+          details
+        );
+
+        sheet
+          .getRange(
+            rowNumber,
+            22,
+            1,
+            2
+          )
+          .setValues([[
+            'Sent',
+            new Date()
+          ]]);
+
+        sentCount++;
+
+      } catch (error) {
+
+        sheet
+          .getRange(rowNumber, 22)
+          .setValue('Failed');
+
+        console.error(
+          'Interview reminder failed for row ' +
+          rowNumber +
+          ': ' +
+          error.message
+        );
+      }
+    });
+
+    console.log(
+      'Interview reminders sent: ' +
+      sentCount
+    );
+
+  } finally {
+
+    lock.releaseLock();
+  }
+}
+
+
+/**
+ * Sends the approved Meta utility template:
+ * brynex_interview_reminder
+ *
+ * Variables:
+ * 1 Candidate Name
+ * 2 Position
+ * 3 Interview Date
+ * 4 Interview Time
+ * 5 Interview Mode
+ * 6 Venue / Meeting Link
+ */
+function sendInterviewReminderTemplate_(
+  mobileNumber,
+  candidateName,
+  position,
+  interviewDate,
+  interviewTime,
+  interviewMode,
+  interviewDetails
+) {
+
+  const props =
+    PropertiesService
+      .getScriptProperties();
+
+  const phoneNumberId =
+    props.getProperty(
+      'WHATSAPP_PHONE_NUMBER_ID'
+    );
+
+  const token =
+    props.getProperty(
+      'WHATSAPP_ACCESS_TOKEN'
+    );
+
+  const templateName =
+    props.getProperty(
+      'WHATSAPP_INTERVIEW_REMINDER_TEMPLATE_NAME'
+    ) ||
+    'brynex_interview_reminder';
+
+  const language =
+    props.getProperty(
+      'WHATSAPP_INTERVIEW_REMINDER_TEMPLATE_LANGUAGE'
+    ) ||
+    'en';
+
+  if (!phoneNumberId) {
+    throw new Error(
+      'WHATSAPP_PHONE_NUMBER_ID is missing.'
+    );
+  }
+
+  if (!token) {
+    throw new Error(
+      'WHATSAPP_ACCESS_TOKEN is missing.'
+    );
+  }
+
+  const cleanNumber =
+    normalizeWhatsAppNumber_(
+      mobileNumber
+    );
+
+  if (!cleanNumber) {
+    throw new Error(
+      'Invalid WhatsApp mobile number.'
+    );
+  }
+
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: cleanNumber,
+
+    type: 'template',
+
+    template: {
+      name: templateName,
+
+      language: {
+        code: language
+      },
+
+      components: [
+        {
+          type: 'body',
+
+          parameters: [
+            {
+              type: 'text',
+              text: String(
+                candidateName
+              )
+            },
+            {
+              type: 'text',
+              text: String(
+                position
+              )
+            },
+            {
+              type: 'text',
+              text: String(
+                interviewDate
+              )
+            },
+            {
+              type: 'text',
+              text: String(
+                interviewTime
+              )
+            },
+            {
+              type: 'text',
+              text: String(
+                interviewMode
+              )
+            },
+            {
+              type: 'text',
+              text: String(
+                interviewDetails
+              )
+            }
+          ]
+        }
+      ]
+    }
+  };
+
+  const url =
+    'https://graph.facebook.com/v26.0/' +
+    phoneNumberId +
+    '/messages';
+
+  const response =
+    UrlFetchApp.fetch(
+      url,
+      {
+        method: 'post',
+
+        headers: {
+          Authorization:
+            'Bearer ' + token
+        },
+
+        contentType:
+          'application/json',
+
+        payload:
+          JSON.stringify(payload),
+
+        muteHttpExceptions: true
+      }
+    );
+
+  const status =
+    response.getResponseCode();
+
+  const body =
+    response.getContentText();
+
+  if (
+    status < 200 ||
+    status >= 300
+  ) {
+    throw new Error(
+      'Interview reminder WhatsApp API failed (' +
+      status +
+      '): ' +
+      body
+    );
+  }
+
+  return JSON.parse(body);
+}
+
+
+function ensureInterviewReminderColumns_(
+  sheet
+) {
+
+  const requiredColumns = 23;
+
+  if (
+    sheet.getMaxColumns() <
+    requiredColumns
+  ) {
+    sheet.insertColumnsAfter(
+      sheet.getMaxColumns(),
+      requiredColumns -
+      sheet.getMaxColumns()
+    );
+  }
+
+  if (
+    !String(
+      sheet.getRange(1, 22)
+        .getValue() || ''
+    ).trim()
+  ) {
+    sheet
+      .getRange(1, 22)
+      .setValue('Reminder Status');
+  }
+
+  if (
+    !String(
+      sheet.getRange(1, 23)
+        .getValue() || ''
+    ).trim()
+  ) {
+    sheet
+      .getRange(1, 23)
+      .setValue('Reminder Sent On');
+  }
+}
+
+
+function formatInterviewReminderDate_(
+  value
+) {
+
+  const tz =
+    Session.getScriptTimeZone();
+
+  if (value instanceof Date) {
+    return Utilities.formatDate(
+      value,
+      tz,
+      'dd MMM yyyy'
+    );
+  }
+
+  return String(value || '').trim();
+}
+
+
+function formatInterviewReminderTime_(
+  value
+) {
+
+  const tz =
+    Session.getScriptTimeZone();
+
+  if (value instanceof Date) {
+    return Utilities.formatDate(
+      value,
+      tz,
+      'hh:mm a'
+    );
+  }
+
+  return String(value || '').trim();
+}
+
+
 function getInterviewSlotById_(ss, slotId) {
 
   const sheet =

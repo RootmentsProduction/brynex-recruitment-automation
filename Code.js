@@ -3,6 +3,7 @@ const SPREADSHEET_ID = '1DlV-ZJOy6HqPMeBqO8-j1bvhh8cBi84aoagMJ8aNoD4';
 const INTAKE_SHEET = 'CV Intake';
 const CONFIG_SHEET = 'CV Automation Config';
 const RESPONSE_SHEET = 'Candidate Interest Responses';
+const EMPLOYMENT_HISTORY_SHEET = 'Employment History';
 
 const MAX_NEW_CVS_PER_RUN = 4;
 
@@ -156,6 +157,12 @@ function processCvFile_(
       'Not Added',                       // X Candidate Tracker Status
       ''                                 // Y Notes
     ]);
+
+    saveEmploymentHistory_(
+      file.getId(),
+      cv.candidate_name || '',
+      cv.work_history || []
+    );
   } catch (error) {
     appendIntakeRow_(sheet, [
       file.getId(),                      // A
@@ -278,6 +285,11 @@ RULES:
 11. Do not penalize a candidate simply because information is missing from the CV.
     Flag it for verification instead.
 12. Keep extracted information concise and practical for an HR recruiter.
+13. Extract the candidate's complete employment history, newest/current role first.
+14. For each employment entry, capture company, role, start date, end date, tenure, and location only when supported by the CV.
+15. Preserve dates as written when exact month/year is unavailable. Use "Present" or "Current" only when the CV clearly says so.
+16. Calculate or summarize tenure only when the source supports it. If the CV itself states a tenure that conflicts with dates, preserve the supported dates and mention the conflict in notes rather than silently correcting it.
+17. Do not include education, personal details, protected characteristics, or non-employment activities in work_history unless they are clearly presented as employment.
 `;
 
   const schema = {
@@ -291,6 +303,31 @@ RULES:
       current_last_designation: { type: 'string' },
       current_last_company: { type: 'string' },
       education: { type: 'string' },
+      work_history: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            company: { type: 'string' },
+            role: { type: 'string' },
+            start_date: { type: 'string' },
+            end_date: { type: 'string' },
+            tenure: { type: 'string' },
+            location: { type: 'string' },
+            notes: { type: 'string' }
+          },
+          required: [
+            'company',
+            'role',
+            'start_date',
+            'end_date',
+            'tenure',
+            'location',
+            'notes'
+          ],
+          additionalProperties: false
+        }
+      },
       cv_missing_or_concern: { type: 'string' },
       cv_followup_questions: { type: 'string' }
     },
@@ -303,6 +340,7 @@ RULES:
       'current_last_designation',
       'current_last_company',
       'education',
+      'work_history',
       'cv_missing_or_concern',
       'cv_followup_questions'
     ],
@@ -338,7 +376,7 @@ RULES:
         schema: schema
       }
     },
-    max_output_tokens: 1200
+    max_output_tokens: 2400
   };
 
   const response = UrlFetchApp.fetch(
@@ -371,6 +409,93 @@ RULES:
   }
 
   return JSON.parse(outputText);
+}
+
+function saveEmploymentHistory_(intakeId, candidateName, workHistory) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(EMPLOYMENT_HISTORY_SHEET);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(EMPLOYMENT_HISTORY_SHEET);
+    sheet.hideSheet();
+  }
+
+  const headers = [
+    'Intake ID',
+    'Candidate Name',
+    'Sequence',
+    'Company',
+    'Role',
+    'Start Date',
+    'End Date',
+    'Tenure',
+    'Location',
+    'Display Line'
+  ];
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  } else {
+    const existingHeaders = sheet
+      .getRange(1, 1, 1, headers.length)
+      .getDisplayValues()[0];
+
+    if (existingHeaders.join('|') !== headers.join('|')) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow > 1) {
+    const ids = sheet
+      .getRange(2, 1, lastRow - 1, 1)
+      .getDisplayValues()
+      .flat();
+
+    for (let i = ids.length - 1; i >= 0; i--) {
+      if (String(ids[i] || '').trim() === String(intakeId || '').trim()) {
+        sheet.deleteRow(i + 2);
+      }
+    }
+  }
+
+  if (!Array.isArray(workHistory) || workHistory.length === 0) return;
+
+  const rows = workHistory
+    .filter(job => job && (job.company || job.role))
+    .map((job, index) => {
+      const company = String(job.company || '').trim();
+      const role = String(job.role || '').trim();
+      const startDate = String(job.start_date || '').trim();
+      const endDate = String(job.end_date || '').trim();
+      const tenure = String(job.tenure || '').trim();
+      const location = String(job.location || '').trim();
+
+      const dateRange = [startDate, endDate].filter(String).join(' - ');
+      const roleLine = [company, role].filter(String).join(' — ');
+      const details = [dateRange, tenure].filter(String).join(' · ');
+      const displayLine = details ? roleLine + ' · ' + details : roleLine;
+
+      return [
+        intakeId,
+        candidateName,
+        index + 1,
+        company,
+        role,
+        startDate,
+        endDate,
+        tenure,
+        location,
+        displayLine
+      ];
+    });
+
+  if (rows.length) {
+    sheet
+      .getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length)
+      .setValues(rows);
+  }
 }
 
 function getOutputText_(response) {

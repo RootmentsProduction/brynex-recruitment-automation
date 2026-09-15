@@ -3791,9 +3791,293 @@ function sendDueInterviewReminders() {
       sentCount
     );
 
+    // The same hourly trigger also follows up once with
+    // candidates who were invited but have not selected a slot.
+    sendPendingInterviewSlotReminders_(
+      ss,
+      sheet
+    );
+
   } finally {
 
     lock.releaseLock();
+  }
+}
+
+
+/**
+ * Sends one follow-up 24 hours after an interview-slot invitation
+ * when the candidate has not selected Slot 1, Slot 2, or
+ * Need Another Time.
+ *
+ * Uses the already-approved interview-slot template again.
+ *
+ * Interview Scheduling Queue:
+ * X = Slot Selection Reminder Status
+ * Y = Slot Selection Reminder Sent On
+ */
+function sendPendingInterviewSlotReminders_(
+  ss,
+  sheet
+) {
+
+  ensureInterviewSlotReminderColumns_(
+    sheet
+  );
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) return;
+
+  const data =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        25
+      )
+      .getValues();
+
+  const now = new Date();
+  const twentyFourHoursMs =
+    24 * 60 * 60 * 1000;
+
+  let sentCount = 0;
+
+  data.forEach((row, index) => {
+
+    const rowNumber = index + 2;
+
+    const candidateName =
+      String(row[1] || '').trim(); // B
+
+    const position =
+      String(row[2] || '').trim(); // C
+
+    const mobileNumber =
+      row[3]; // D
+
+    const candidateReply =
+      String(row[12] || '').trim(); // M
+
+    const interviewStatus =
+      String(row[15] || '').trim(); // P
+
+    const inviteStatus =
+      String(row[16] || '').trim(); // Q
+
+    const inviteSentOn =
+      row[17]; // R
+
+    const slot1Id =
+      String(row[19] || '').trim(); // T
+
+    const slot2Id =
+      String(row[20] || '').trim(); // U
+
+    const reminderStatus =
+      String(row[23] || '').trim(); // X
+
+    // Only candidates who received the invitation but have not replied.
+    if (
+      interviewStatus !== 'To Schedule' ||
+      inviteStatus !== 'Sent' ||
+      candidateReply
+    ) {
+      return;
+    }
+
+    if (
+      reminderStatus === 'Sent' ||
+      reminderStatus === 'Sending'
+    ) {
+      return;
+    }
+
+    if (
+      !candidateName ||
+      !position ||
+      !mobileNumber ||
+      !inviteSentOn ||
+      !slot1Id ||
+      !slot2Id
+    ) {
+
+      sheet
+        .getRange(rowNumber, 24)
+        .setValue('Needs Review');
+
+      return;
+    }
+
+    const sentAt =
+      inviteSentOn instanceof Date
+        ? inviteSentOn
+        : new Date(inviteSentOn);
+
+    if (
+      isNaN(sentAt.getTime()) ||
+      now.getTime() -
+        sentAt.getTime() <
+        twentyFourHoursMs
+    ) {
+      return;
+    }
+
+    const slot1 =
+      getInterviewSlotById_(
+        ss,
+        slot1Id
+      );
+
+    const slot2 =
+      getInterviewSlotById_(
+        ss,
+        slot2Id
+      );
+
+    if (!slot1 || !slot2) {
+
+      sheet
+        .getRange(rowNumber, 24)
+        .setValue('Needs Review');
+
+      return;
+    }
+
+    const slot1DateTime =
+      combineInterviewDateTime_(
+        slot1.date,
+        slot1.time
+      );
+
+    const slot2DateTime =
+      combineInterviewDateTime_(
+        slot2.date,
+        slot2.time
+      );
+
+    // Do not resend stale or unavailable options.
+    if (
+      slot1DateTime <= now ||
+      slot2DateTime <= now ||
+      Number(slot1.available) <= 0 ||
+      Number(slot2.available) <= 0
+    ) {
+
+      sheet
+        .getRange(rowNumber, 24)
+        .setValue('Needs New Slots');
+
+      return;
+    }
+
+    sheet
+      .getRange(rowNumber, 24)
+      .setValue('Sending');
+
+    SpreadsheetApp.flush();
+
+    try {
+
+      sendInterviewWhatsAppTemplate_(
+        mobileNumber,
+        candidateName,
+        position,
+
+        slot1.dateText,
+        slot1.timeText,
+        slot1.mode,
+
+        slot2.dateText,
+        slot2.timeText,
+        slot2.mode,
+
+        slot1.details || slot2.details || '',
+        String(row[0] || '').trim()
+      );
+
+      sheet
+        .getRange(
+          rowNumber,
+          24,
+          1,
+          2
+        )
+        .setValues([[
+          'Sent',
+          new Date()
+        ]]);
+
+      sentCount++;
+
+    } catch (error) {
+
+      sheet
+        .getRange(rowNumber, 24)
+        .setValue('Failed');
+
+      console.error(
+        'Interview slot reminder failed for row ' +
+        rowNumber +
+        ': ' +
+        error.message
+      );
+    }
+  });
+
+  console.log(
+    'Interview slot reminders sent: ' +
+    sentCount
+  );
+}
+
+
+function ensureInterviewSlotReminderColumns_(
+  sheet
+) {
+
+  const requiredColumns = 25;
+
+  if (
+    sheet.getMaxColumns() <
+    requiredColumns
+  ) {
+
+    sheet.insertColumnsAfter(
+      sheet.getMaxColumns(),
+      requiredColumns -
+      sheet.getMaxColumns()
+    );
+  }
+
+  if (
+    !String(
+      sheet.getRange(1, 24)
+        .getValue() || ''
+    ).trim()
+  ) {
+
+    sheet
+      .getRange(1, 24)
+      .setValue(
+        'Slot Selection Reminder Status'
+      );
+  }
+
+  if (
+    !String(
+      sheet.getRange(1, 25)
+        .getValue() || ''
+    ).trim()
+  ) {
+
+    sheet
+      .getRange(1, 25)
+      .setValue(
+        'Slot Selection Reminder Sent On'
+      );
   }
 }
 
